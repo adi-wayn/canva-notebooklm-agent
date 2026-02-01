@@ -15,6 +15,9 @@ export function useEventStream() {
 
   const abortRef = useRef(null);
   const decoderRef = useRef(new TextDecoder());
+  const intentionalCloseRef = useRef(false);
+  const configRef = useRef(null); // { workflowId, tenantId }
+  const retryTimeoutRef = useRef(null);
 
   const appendEvent = useCallback((event) => {
     setEvents((prev) => [...prev.slice(-199), event]);
@@ -25,21 +28,33 @@ export function useEventStream() {
   }, []);
 
   const closeStream = useCallback(() => {
+    intentionalCloseRef.current = true;
     if (abortRef.current) {
       abortRef.current.abort();
       abortRef.current = null;
     }
+    if (retryTimeoutRef.current) {
+      clearTimeout(retryTimeoutRef.current);
+      retryTimeoutRef.current = null;
+    }
     setIsConnected(false);
+    configRef.current = null;
   }, []);
 
-  const openStream = useCallback(
+  const connect = useCallback(
     async (workflowId, tenantId, lastId = null) => {
-      closeStream();
-      setStreamError(null);
-      setIsConnected(false);
+      // Don't close explicitly here; we might be reconnecting
+      // But we should ensure no duplicate streams
+      if (abortRef.current) {
+        abortRef.current.abort();
+      }
 
       const controller = new AbortController();
       abortRef.current = controller;
+      intentionalCloseRef.current = false;
+
+      // Update config for retries
+      configRef.current = { workflowId, tenantId };
 
       try {
         const streamResp = await api.openWorkflowStream(
@@ -49,6 +64,8 @@ export function useEventStream() {
         );
 
         setIsConnected(true);
+        setStreamError(null); // Clear error on successful connect
+
         const { reader } = streamResp;
         let buffer = '';
 
@@ -66,7 +83,11 @@ export function useEventStream() {
             const event = parseEventChunk(chunk);
             if (event) {
               appendEvent(event);
-              if (event.id) setLastEventId(event.id);
+              if (event.id) {
+                setLastEventId(event.id);
+                // Update local var for retry logic if needed immediately
+                lastId = event.id;
+              }
             }
 
             boundary = buffer.indexOf('\n\n');
@@ -74,15 +95,39 @@ export function useEventStream() {
         }
       } catch (err) {
         if (err.name !== 'AbortError') {
+          console.warn('[EventStream] Stream error:', err);
           setStreamError(err.message);
         }
       } finally {
         setIsConnected(false);
         abortRef.current = null;
+
+        // Auto-reconnect logic
+        if (!intentionalCloseRef.current && configRef.current) {
+          const { workflowId: wId, tenantId: tId } = configRef.current;
+          console.log(`[EventStream] Connection lost. Reconnecting to ${wId} with lastId=${lastId}...`);
+
+          // Exponential backoff or simple delay
+          retryTimeoutRef.current = setTimeout(() => {
+            // Pass the *latest* lastEventId from state would be ideal, 
+            // but inside callback we might need the ref-tracked one or the one from scope.
+            // Relying on the 'lastId' variable in this scope which was updated in the loop.
+            connect(wId, tId, lastId);
+          }, 3000);
+        }
       }
     },
-    [closeStream, appendEvent]
+    [appendEvent]
   );
+
+  const openStream = useCallback((workflowId, tenantId, lastId = null) => {
+    // Public API to start fresh
+    if (retryTimeoutRef.current) clearTimeout(retryTimeoutRef.current);
+    setEvents([]);
+    setLastEventId(lastId); // Initialize state
+    setStreamError(null);
+    return connect(workflowId, tenantId, lastId);
+  }, [connect]);
 
   const reset = useCallback(() => {
     closeStream();

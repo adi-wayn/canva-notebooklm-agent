@@ -210,6 +210,7 @@ async def stream_workflow_events(
     queue = broadcaster.subscribe(workflow_id)
 
     async def event_generator():
+        last_replayed_id = replay_cursor or 0
         try:
             # 1) Replay persisted events > cursor (source of truth)
             async with database.session() as session:
@@ -220,6 +221,8 @@ async def stream_workflow_events(
                     yield f"id: {ev.id}\n"
                     import json as _json
                     yield f"data: {_json.dumps(ev.payload)}\n\n"
+                    if ev.id > last_replayed_id:
+                        last_replayed_id = ev.id
             
             # 2) For live updates in same-process context (e.g., E2E test),
             # subscribe to in-memory broadcaster (worker in same process)
@@ -227,9 +230,17 @@ async def stream_workflow_events(
                 event = await queue.get()
                 # Expect dict {"id": int, "payload": dict}
                 if isinstance(event, dict) and "id" in event and "payload" in event:
-                    yield f"id: {event['id']}\n"
+                    event_id = event['id']
+                    # De-duplication: Skip if already replayed from DB
+                    if event_id <= last_replayed_id:
+                        continue
+                        
+                    yield f"id: {event_id}\n"
                     import json as _json
                     yield f"data: {_json.dumps(event['payload'])}\n\n"
+                    
+                    if event_id > last_replayed_id:
+                        last_replayed_id = event_id
                 else:
                     # Fallback (legacy)
                     event_json = event.to_json() if hasattr(event, "to_json") else str(event)

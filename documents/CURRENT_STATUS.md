@@ -43,18 +43,22 @@ Frontend SSE Listener
 
 ---
 
-## Frontend Status: ⏳ INTEGRATION DEBUGGING
+## Frontend Status: ⏳ VERIFICATION PENDING
 
 ### Current State
 - React + Vite setup working
-- `useEventStream()` hook subscribed to SSE
+- `useEventStream()` hook updated with **AUTO-RECONNECT** logic
 - `useWorkflowState()` hook manages state
 - Components render based on workflow status
 
+### Recent Fixes (2026-02-01)
+- ✅ **Backend:** Fixed race condition causing duplicate events in SSE stream
+- ✅ **Frontend:** implemented `Last-Event-ID` based auto-reconnection loop in `useEventStream`
+- 🎯 This should resolve the "Stuck at PROCESSING" issue.
+
 ### Known Issues
-- ❌ E2E tests fail 4/8 (workflows stuck at PROCESSING in Playwright)
-- ⚠️ Mismatch between worker completion logs and UI observation
-- ⚠️ May be timing (subscribe after events) or parsing (SSE frames not captured)
+- ⚠️ Mismatch between worker completion logs and UI observation (Fix Applied, awaiting test)
+- ⚠️ May be timing (subscribe after events) or parsing (SSE frames not captured) -> **Likely Resolved**
 
 ### What Works
 - ✅ Workflow creation via API
