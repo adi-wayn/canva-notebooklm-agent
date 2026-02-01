@@ -200,30 +200,33 @@ class WorkflowWorker:
                         self.engine.queue_workflow(engine_workflow)
                         self.engine.start_processing(engine_workflow)
 
-                        # Simulated failure (for integration tests) - only once per workflow
-                        simulate_flag = (engine_workflow.input_data or {}).get("simulate_failure")
-                        simulate_consumed_local = (workflow_db.custom_metadata or {}).get("simulate_failure_consumed")
-                        if simulate_flag and not simulate_consumed_local:
-                            # Mark consumed in metadata on persist
-                            if simulate_flag == "transient_once":
-                                raise RateLimitError("forced transient failure")
-                            if simulate_flag == "permanent_once":
-                                raise InvalidResponseError("forced permanent failure")
+                        # Import here to avoid circular dependencies if any
+                        from src.config import settings
+                        from src.workflows.handlers import HANDLERS
+                        from src.adapters.notebooklm_adapter import NotebookLMAdapter
 
-                        # Run decision engine calls (mocked for now, real in T2.7)
-                        # This is where the orchestration happens
-                        self.engine.update_progress(engine_workflow, "analyzing", 25)
-                        await asyncio.sleep(0.1)  # Small delay to allow event streaming
-                        self.engine.update_progress(engine_workflow, "generating", 50)
-                        await asyncio.sleep(0.1)
-                        self.engine.update_progress(engine_workflow, "creating", 75)
-                        await asyncio.sleep(0.1)
-                        self.engine.update_progress(engine_workflow, "finalizing", 95)
-                        await asyncio.sleep(0.1)
+                        # Determine Handler
+                        wf_type = engine_workflow.input_data.get("type", "generate_presentation_from_notebooklm")
+                        handler = HANDLERS.get(wf_type)
 
-                        # Create real Canva design if connected
-                        try:
-                            # Check if user has Canva connection
+                        if handler:
+                            logger.info(f"[{self.worker_id}] Routing to handler: {wf_type}")
+                            
+                            # Initialize Adapters
+                            adapters: Dict[str, Any] = {}
+                            
+                            # 1. NotebookLM Adapter
+                            # Note: In real app, we might check if user has connected NotebookLM
+                            # For implementation plan, we rely on env var API key
+                            adapters["notebooklm"] = NotebookLMAdapter(
+                                client_id="dummy", # Not used for key-based auth
+                                client_secret="dummy", 
+                                access_token=settings.notebooklm.api_key.get_secret_value(),
+                                mock_mode=settings.notebooklm.mock_mode # Default False
+                            )
+
+                            # 2. Canva Adapter
+                            # Check connection
                             async with database.session() as session:
                                 conn_repo = UserConnectionRepository(
                                     session, 
@@ -233,61 +236,54 @@ class WorkflowWorker:
                                 has_canva = await conn_repo.has_connection("canva")
                             
                             if has_canva:
-                                # Get Canva adapter from database tokens
-                                adapter = await create_canva_adapter_from_db(
+                                canva_adapter = await create_canva_adapter_from_db(
                                     user_id=engine_workflow.user_id,
                                     tenant_id=engine_workflow.tenant_id
                                 )
-                                
-                                if adapter:
-                                    # Create a real design with title from input
-                                    title = engine_workflow.input_data.get("description", "Generated Design")
-                                    design = await adapter.create_presentation(title=title)
-                                    
-                                    # Add artifact with design ID and resolvable URL
-                                    design_url = f"https://www.canva.com/design/{design.design_id}/edit"
-                                    self.engine.add_artifact(
-                                        engine_workflow,
-                                        name=f"Design: {title}",
-                                        content_type="canva_design",
-                                        url=design_url,
-                                        data={
-                                            "design_id": design.design_id,
-                                            "title": design.title,
-                                            "created_at": design.created_at.isoformat() if design.created_at else None,
-                                        }
-                                    )
-                                    logger.info(f"✅ [{self.worker_id}] Created real Canva design: {design.design_id}")
-                                    await adapter.close()
+                                if canva_adapter:
+                                    adapters["canva"] = canva_adapter
                                 else:
-                                    logger.warning(f"⚠️ [{self.worker_id}] Canva adapter creation failed (token expired?)")
-                                    self.engine.add_artifact(
-                                        engine_workflow,
-                                        name="Error: Canva token expired",
-                                        content_type="text",
-                                        data={"message": "Please reconnect to Canva"}
-                                    )
+                                    logger.warning("Canva connection found but adapter creation failed")
                             else:
-                                # Canva not connected - add placeholder artifact
-                                logger.info(f"ℹ️ [{self.worker_id}] Canva not connected, skipping design creation")
-                                self.engine.add_artifact(
-                                    engine_workflow,
-                                    name="Connect Canva to create designs",
-                                    content_type="text",
-                                    data={"message": "Click 'Connect Canva' in the app to authorize design creation"}
-                                )
-                        except Exception as e:
-                            logger.error(f"❌ [{self.worker_id}] Failed to create Canva design: {e}")
-                            self.engine.add_artifact(
-                                engine_workflow,
-                                name="Error creating design",
-                                content_type="text",
-                                data={"error": str(e)}
-                            )
+                                logger.info("Canva not connected")
 
-                        # Complete workflow
-                        self.engine.complete_workflow(engine_workflow)
-                        logger.info(f"✅ [{self.worker_id}] Workflow {workflow_id} execution completed successfully")
+                            try:
+                                # Execute Handler
+                                self.engine.update_progress(engine_workflow, "processing", 10)
+                                result = await handler(
+                                    workflow_id, 
+                                    tenant_id, 
+                                    engine_workflow.input_data or {}, 
+                                    adapters, 
+                                    None
+                                )
+                                
+                                # Process Results
+                                if result:
+                                    canva_url = result.get("canva_edit_url")
+                                    if canva_url:
+                                        self.engine.add_artifact(
+                                            engine_workflow,
+                                            name=f"Presentation: {engine_workflow.input_data.get('prompt', 'Design')}",
+                                            content_type="canva_design",
+                                            url=canva_url,
+                                            data=result
+                                        )
+                            finally:
+                                # Cleanup adapters
+                                for name, adapter in adapters.items():
+                                    if hasattr(adapter, "close"):
+                                        await adapter.close()
+
+                            # Complete
+                            self.engine.complete_workflow(engine_workflow)
+                            logger.info(f"✅ [{self.worker_id}] Workflow {workflow_id} execution completed via handler")
+
+                        else:
+                            # Fallback / Legacy Logic
+                            logger.warning(f"Unknown workflow type: {wf_type}. Running catch-all logic.")
+                            self.engine.complete_workflow(engine_workflow)
+
 
                     except Exception as e:
                         # Workflow engine classifies error and fails workflow

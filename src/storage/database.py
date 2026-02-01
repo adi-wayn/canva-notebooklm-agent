@@ -40,19 +40,30 @@ class Database:
         Initialize database engine and session factory.
 
         Must be called on application startup.
-        Connects to the configured database (PostgreSQL only for runtime).
+        Connects to the configured database (PostgreSQL required for prod).
         """
         import logging
         logger = logging.getLogger(__name__)
 
         try:
+            connect_args = {}
+            engine_kwargs = {
+                "echo": settings.database.echo,
+                "pool_pre_ping": settings.database.pool_pre_ping,
+                "pool_recycle": 3600,
+            }
+
+            if "sqlite" in settings.database.url:
+                from sqlalchemy.pool import StaticPool
+                engine_kwargs["poolclass"] = StaticPool
+                engine_kwargs["connect_args"] = {"check_same_thread": False}
+            else:
+                engine_kwargs["pool_size"] = settings.database.pool_size
+                engine_kwargs["max_overflow"] = 10
+
             engine = create_async_engine(
                 settings.database.url,
-                echo=settings.database.echo,
-                pool_size=settings.database.pool_size,
-                max_overflow=10,
-                pool_pre_ping=settings.database.pool_pre_ping,
-                pool_recycle=3600,
+                **engine_kwargs
             )
             # Probe connection early to surface auth/availability issues
             async with engine.connect() as conn:
@@ -62,7 +73,7 @@ class Database:
         except Exception as e:
             logger.error(f"✗ Failed to connect to database: {e}")
             logger.error(f"  Database URL: {settings.database.url}")
-            logger.error("  Postgres is required; no SQLite fallback is enabled.")
+            logger.error("  Postgres is required for production; SQLite is for testing only.")
             raise
 
         self._session_factory = sessionmaker(

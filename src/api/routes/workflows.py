@@ -133,6 +133,49 @@ async def create_workflow(
     return _workflow_to_schema(workflow)
 
 
+def _db_to_schema(workflow_db) -> WorkflowSchema:
+    """Convert DB Workflow model to Pydantic schema."""
+    metadata = workflow_db.custom_metadata or {}
+    return WorkflowSchema(
+        id=workflow_db.id,
+        tenant_id=workflow_db.tenant_id,
+        user_id=workflow_db.user_id,
+        status=str(workflow_db.status).upper(),
+        step=metadata.get("step") or "",
+        progress_pct=int(metadata.get("progress_pct", 0)),
+        artifacts=metadata.get("artifacts", []),
+        error=metadata.get("error"),
+        created_at=workflow_db.created_at,
+        started_at=workflow_db.started_at,
+        completed_at=workflow_db.completed_at,
+        request_id=metadata.get("request_id", ""),
+    )
+
+
+@router.get("/workflows")
+async def list_workflows(
+    x_tenant_id: str = Header(None),
+    limit: int = 20,
+    offset: int = 0,
+) -> list[WorkflowSchema]:
+    """
+    List workflows for the tenant.
+    
+    GET /api/v1/workflows
+    Header: X-Tenant-ID
+    Query: limit, offset
+    
+    Returns: List of workflows
+    """
+    tenant_id = _extract_tenant_id(x_tenant_id)
+
+    async with database.session() as session:
+        wf_repo = WorkflowRepository(session, tenant_id=tenant_id)
+        workflows = await wf_repo.list_all(limit=limit, offset=offset)
+    
+    return [_db_to_schema(wf) for wf in workflows]
+
+
 @router.get("/workflows/{workflow_id}")
 async def get_workflow(
     workflow_id: str,

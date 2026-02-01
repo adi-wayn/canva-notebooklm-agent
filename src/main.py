@@ -6,6 +6,7 @@ import asyncio
 from datetime import datetime
 import json
 
+from fastapi.middleware.cors import CORSMiddleware
 from src.middleware.request_context import RequestContextMiddleware
 from src.api.routes.workflows import router as workflow_router
 from src.api.routes.auth import router as auth_router
@@ -14,6 +15,15 @@ from src.storage.database import database
 app = FastAPI(title="Canva-NotebookLM Integration Prototype",
               description="Prototype API for integrating Canva and NotebookLM",
               version="0.1.0")
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Add request context middleware
 app.add_middleware(RequestContextMiddleware)

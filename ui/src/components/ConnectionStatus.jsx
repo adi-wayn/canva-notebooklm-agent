@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import "./ConnectionStatus.css";
 
-export default function ConnectionStatus() {
+export function ConnectionStatus() {
   const [canvaStatus, setCanvaStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(false);

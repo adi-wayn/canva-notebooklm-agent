@@ -169,6 +169,7 @@ class NotebookLMAdapter(NotebookLMAdapterInterface):
         refresh_token: Optional[str] = None,
         base_url: str = "https://notebooklm.googleapis.com/v1",
         cache=None,
+        mock_mode: bool = False,
     ):
         """Initialize NotebookLM adapter.
 
@@ -179,6 +180,7 @@ class NotebookLMAdapter(NotebookLMAdapterInterface):
             refresh_token: Refresh token for token rotation
             base_url: API base URL
             cache: Cache instance for rate limiting (optional)
+            mock_mode: If True, uses in-memory mock data (for CI/Tests only).
         """
         self.client_id = client_id
         self.client_secret = client_secret
@@ -186,6 +188,15 @@ class NotebookLMAdapter(NotebookLMAdapterInterface):
         self.refresh_token = refresh_token
         self.base_url = base_url
         self.cache = cache
+        self.mock_mode = mock_mode
+
+        # Strict Real Mode: Check credentials immediately if not mocking
+        if not self.mock_mode and not self.access_token:
+            # Note: In real OAuth flow, we might start without token but need creds.
+            # Here we assume we need at least client_id/secret for real usage.
+            if not self.client_id or not self.client_secret:
+                 # We don't raise here to allow initialization, but we will fail on request.
+                 pass
 
         self.client = httpx.AsyncClient(
             timeout=30.0,
@@ -203,6 +214,20 @@ class NotebookLMAdapter(NotebookLMAdapterInterface):
     async def close(self):
         """Close the HTTP client."""
         await self.client.aclose()
+
+    # ... (rest of methods)
+    
+    # Internal helper for Mock Responses
+    def _get_mock_summary(self):
+        """Return deterministic mock summary for CI/Tests."""
+        return {
+             "title": "Quantum Physics Overview",
+             "sections": [
+                 {"heading": "Wave-Particle Duality", "bullets": ["Matter exhibits both wave and particle properties."]},
+                 {"heading": "Schrödinger Equation", "bullets": ["Governs the wave function of a quantum-mechanical system."]}
+             ]
+        }
+
 
     async def _check_rate_limit(self, tenant_id: str):
         """Check and enforce per-tenant rate limit.
@@ -518,6 +543,28 @@ class NotebookLMAdapter(NotebookLMAdapterInterface):
         Returns:
             Message object with assistant response
         """
+        # Strict Mock Mode Logic
+        if self.mock_mode:
+            import json
+            logger = logging.getLogger(__name__)
+            logger.info(f"[MOCK] NotebookLM.send_message(notebook_id={notebook_id})")
+            return Message(
+                message_id="mock_msg_123",
+                notebook_id=notebook_id,
+                role="assistant",
+                content=json.dumps(self._get_mock_summary()),
+                created_at=datetime.utcnow(),
+                metadata={"mock": True}
+            )
+
+        # Real Mode Logic
+        if not self.access_token:
+             # Fail explicitly in Real Mode if no token
+             raise AuthenticationError(
+                 "NotebookLM Access Token is missing. Please check your credentials.",
+                 status_code=401
+             )
+
         payload = {"content": content}
 
         response = await self._make_request("POST", f"/notebooks/{notebook_id}/messages", json=payload)

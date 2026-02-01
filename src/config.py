@@ -89,6 +89,7 @@ class CanvaSettings(BaseSettings):
     retry_backoff_initial_ms: int = Field(100, description="Initial backoff in ms")
     retry_backoff_multiplier: float = Field(2.0, description="Backoff multiplier")
     retry_backoff_max_ms: int = Field(30000, description="Max backoff in ms")
+    mock_mode: bool = Field(False, description="Enable mock mode for testing (default: False)")
 
     class Config:
         env_prefix = "CANVA_"
@@ -110,6 +111,7 @@ class NotebookLMSettings(BaseSettings):
     retry_backoff_initial_ms: int = Field(200, description="Initial backoff in ms")
     retry_backoff_multiplier: float = Field(2.0, description="Backoff multiplier")
     retry_backoff_max_ms: int = Field(60000, description="Max backoff in ms")
+    mock_mode: bool = Field(False, description="Enable mock mode for testing (default: False)")
 
     class Config:
         env_prefix = "NOTEBOOKLM_"
