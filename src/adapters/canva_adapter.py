@@ -11,8 +11,9 @@ Provides:
 
 import asyncio
 import logging
+import base64
 from abc import ABC, abstractmethod
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
 import httpx
@@ -267,13 +268,19 @@ class CanvaAdapter(CanvaAdapterInterface):
             )
 
         try:
+            # Prepare Basic Auth
+            credentials = f"{self.client_id}:{self.client_secret}"
+            encoded_credentials = base64.b64encode(credentials.encode()).decode()
+            
             response = await self.client.post(
-                "/oauth2/token",
-                json={
+                "/rest/v1/oauth/token",
+                data={
                     "grant_type": "refresh_token",
-                    "client_id": self.client_id,
-                    "client_secret": self.client_secret,
                     "refresh_token": self.refresh_token,
+                },
+                headers={
+                    "Authorization": f"Basic {encoded_credentials}",
+                    "Content-Type": "application/x-www-form-urlencoded",
                 },
             )
             response.raise_for_status()
@@ -443,20 +450,58 @@ class CanvaAdapter(CanvaAdapterInterface):
             else:
                  raise AuthenticationError("Canva Access Token is missing. Please connect Canva account.", status_code=401)
         
-        payload = {"title": title}
+        payload = {
+            "title": title,
+            "design_type": {
+                "type": "preset",
+                "name": "presentation"
+            }
+        }
         if template_id:
             payload["template_id"] = template_id
 
-        data = await self._make_request("POST", "/designs", json=payload)
+        data = await self._make_request("POST", "/rest/v1/designs", json=payload)
+        logger.info(f"Canva Create Design Response: {data}")
+        
+        # Handle potential nested response structure
+        design_data = data.get("design", data)
+        
+        created_at = design_data.get("created_at")
+        if isinstance(created_at, int):
+            dt = datetime.fromtimestamp(created_at, tz=timezone.utc)
+        elif isinstance(created_at, str):
+            dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+        else:
+            dt = None
+
         return Design(
-            design_id=data["id"],
-            title=data["title"],
-            created_at=datetime.fromisoformat(data.get("created_at", "").replace("Z", "+00:00"))
-            if data.get("created_at")
-            else None,
+            design_id=design_data["id"],
+            title=design_data.get("title", title),
+            created_at=dt,
         )
 
-    # ... get_design ... 
+    async def get_design(self, design_id: str) -> Design:
+        """Retrieve design metadata."""
+        if self.mock_mode:
+            logger.info(f"[MOCK] CanvaAdapter.get_design(design_id={design_id})")
+            return Design(
+                design_id=design_id,
+                title="Mock Design",
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
+                thumbnail_url="https://via.placeholder.com/800x600",
+                metadata={"mock": True}
+            )
+
+        data = await self._make_request("GET", f"/rest/v1/designs/{design_id}")
+        return Design(
+            design_id=data["id"],
+            title=data.get("title", "Untitled"),
+            created_at=datetime.fromisoformat(data.get("created_at").replace("Z", "+00:00")) if data.get("created_at") else None,
+            updated_at=datetime.fromisoformat(data.get("updated_at").replace("Z", "+00:00")) if data.get("updated_at") else None,
+            thumbnail_url=data.get("thumbnail_url"),
+            metadata=data
+        ) 
 
     async def add_text_block(
         self,
@@ -491,7 +536,7 @@ class CanvaAdapter(CanvaAdapterInterface):
 
         data = await self._make_request(
             "POST",
-            f"/designs/{design_id}/elements",
+            f"/rest/v1/designs/{design_id}/elements",
             json=payload,
         )
 
@@ -522,7 +567,7 @@ class CanvaAdapter(CanvaAdapterInterface):
 
         data = await self._make_request(
             "POST",
-            f"/designs/{design_id}/elements",
+            f"/rest/v1/designs/{design_id}/elements",
             json=payload,
         )
 
@@ -544,7 +589,7 @@ class CanvaAdapter(CanvaAdapterInterface):
 
         data = await self._make_request(
             "POST",
-            f"/designs/{design_id}/apply-template",
+            f"/rest/v1/designs/{design_id}/apply-template",
             json=payload,
         )
 
@@ -561,7 +606,7 @@ class CanvaAdapter(CanvaAdapterInterface):
         """Export a design in the specified format."""
         data = await self._make_request(
             "GET",
-            f"/designs/{design_id}/export",
+            f"/rest/v1/designs/{design_id}/export",
             params={"format": format.value},
         )
 
@@ -632,9 +677,15 @@ async def create_canva_adapter_from_db(
             return None
         
         # Check if token is expired
-        if connection.token_expires_at and connection.token_expires_at < datetime.utcnow():
-            logger.warning(f"Canva token expired for user {user_id}")
-            return None
+        # Check if token is expired
+        if connection.token_expires_at:
+            expires_at = connection.token_expires_at
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            
+            if expires_at < datetime.now(timezone.utc):
+                logger.warning(f"Canva token expired for user {user_id}")
+                return None
         
         # Create adapter with tokens from database
         from src.config import settings

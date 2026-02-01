@@ -14,10 +14,12 @@ export function ConnectionStatus() {
   const checkConnectionStatus = async () => {
     try {
       setLoading(true);
-      const response = await fetch("/api/v1/auth/canva/status", {
+      const tenantId = "demo-tenant";
+      const userId = "test-user";
+
+      const response = await fetch(`/api/v1/auth/canva/status?user_id=${userId}`, {
         headers: {
-          "X-Tenant-ID": localStorage.getItem("tenantId") || "default-tenant",
-          "X-User-ID": localStorage.getItem("userId") || "default-user",
+          "X-Tenant-ID": tenantId,
         },
       });
       const data = await response.json();
@@ -30,26 +32,12 @@ export function ConnectionStatus() {
     }
   };
 
-  const handleConnectCanva = async () => {
+  const handleConnectCanva = () => {
     setConnecting(true);
-    try {
-      // Initiate OAuth flow - will redirect to Canva
-      const response = await fetch("/api/v1/auth/canva/authorize", {
-        method: "GET",
-        headers: {
-          "X-Tenant-ID": localStorage.getItem("tenantId") || "default-tenant",
-          "X-User-ID": localStorage.getItem("userId") || "default-user",
-        },
-      });
-
-      if (response.ok) {
-        // Response should be a redirect, but we'll navigate manually
-        window.location.href = response.url;
-      }
-    } catch (error) {
-      console.error("Error initiating Canva OAuth:", error);
-      setConnecting(false);
-    }
+    // Direct redirect for OAuth
+    const tenantId = "demo-tenant";
+    const userId = "test-user";
+    window.location.href = `/api/v1/auth/canva/authorize?user_id=${userId}&tenant_id=${tenantId}`;
   };
 
   const handleDisconnectCanva = async () => {
@@ -62,9 +50,10 @@ export function ConnectionStatus() {
       const response = await fetch("/api/v1/auth/canva/disconnect", {
         method: "POST",
         headers: {
-          "X-Tenant-ID": localStorage.getItem("tenantId") || "default-tenant",
-          "X-User-ID": localStorage.getItem("userId") || "default-user",
+          "Content-Type": "application/json",
+          "X-Tenant-ID": "demo-tenant",
         },
+        body: JSON.stringify({ user_id: "test-user" })
       });
 
       if (response.ok) {

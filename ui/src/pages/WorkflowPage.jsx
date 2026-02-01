@@ -17,7 +17,7 @@ import { useEventStream } from '../hooks/useEventStream';
 
 export function WorkflowPage() {
   const [tenantId, setTenantId] = useState('demo-tenant');
-  const [userId, setUserId] = useState('demo-user');
+  const [userId, setUserId] = useState('test-user');
   const [showHistory, setShowHistory] = useState(false);
   const [userPrompt, setUserPrompt] = useState('');
 
@@ -36,7 +36,7 @@ export function WorkflowPage() {
   const handleCreateWorkflow = async (config) => {
     // Store the user's prompt for display
     setUserPrompt(config.description || config.design_id || 'New workflow request');
-    
+
     workflowState.reset();
     eventStream.reset();
 
@@ -113,6 +113,26 @@ export function WorkflowPage() {
       workflowState.updateFromEvent(latestEvent);
     }
   }, [eventStream.events]);
+
+  // Hydrate artifacts from DB when workflow reaches terminal state
+  // (SSE is best-effort; DB is source of truth)
+  React.useEffect(() => {
+    if (!activeWorkflowId) return;
+
+    const status = workflowState.snapshot?.status;
+    if (status === 'COMPLETED' || status === 'FAILED') {
+      const fetchFullWorkflow = async () => {
+        try {
+          const fullWorkflow = await workflow.fetch(activeWorkflowId, tenantId);
+          // Update local state with DB artifacts
+          workflowState.setSnapshot(fullWorkflow);
+        } catch (error) {
+          console.error('Failed to hydrate workflow artifacts:', error);
+        }
+      };
+      fetchFullWorkflow();
+    }
+  }, [workflowState.snapshot?.status, activeWorkflowId]);
 
   // Extract artifacts from workflow
   const artifacts = workflowState.snapshot?.artifacts || [];
@@ -317,18 +337,34 @@ export function WorkflowPage() {
 // Helper to extract current step from events
 function getCurrentStep(events) {
   if (!events || events.length === 0) return 'Starting...';
-  
+
   const lastEvent = events[events.length - 1];
   const payload = lastEvent.payload || {};
-  
+
+  // Handle agent_step events
+  if (payload.event_name) {
+    const agentMessages = {
+      'agent_thinking': 'Analyzing your request',
+      'notebooklm_extraction_started': 'Extracting insights from NotebookLM',
+      'notebooklm_extraction_completed': 'Extracted key insights',
+      'design_plan_created': 'Planning your design',
+      'canva_design_started': 'Creating Canva design',
+      'canva_design_created': 'Canva design created',
+      'canva_content_partial_warning': 'Design created with warnings',
+    };
+
+    return payload.message || agentMessages[payload.event_name] || payload.event_name;
+  }
+
+  // Legacy event handling (backwards-compatible)
   if (payload.step) {
     return capitalizeFirst(payload.step);
   }
-  
+
   if (payload.event_type === 'status_changed') {
     return `Status: ${payload.new_status}`;
   }
-  
+
   return 'Processing...';
 }
 

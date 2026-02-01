@@ -248,14 +248,37 @@ class WorkflowWorker:
                                 logger.info("Canva not connected")
 
                             try:
-                                # Execute Handler
+                                # Reset seq counter for this workflow
+                                from src.workers.event_emitter import reset_seq_counter
+                                reset_seq_counter(workflow_id)
+                                
+                                # Create event emission function that persists + broadcasts
+                                async def emit_agent_event(event_name: str, message: str, progress_pct: int, metadata: dict):
+                                    """Persist agent event to DB and broadcast via SSE."""
+                                    from src.workers.event_emitter import emit_agent_event as _emit
+                                    async with database.session() as session:
+                                        await _emit(
+                                            workflow_id=workflow_id,
+                                            tenant_id=tenant_id,
+                                            event_name=event_name,
+                                            message=message,
+                                            progress_pct=progress_pct,
+                                            metadata=metadata,
+                                            session=session,
+                                            broadcaster=broadcaster
+                                        )
+                                
+                                # Execute Handler with agent support
                                 self.engine.update_progress(engine_workflow, "processing", 10)
                                 result = await handler(
                                     workflow_id, 
                                     tenant_id, 
                                     engine_workflow.input_data or {}, 
                                     adapters, 
-                                    None
+                                    None,
+                                    emit_event_fn=emit_agent_event,  # NEW: Event emission
+                                    workflow=engine_workflow,  # NEW: For artifact management
+                                    engine=self.engine  # NEW: For artifact management
                                 )
                                 
                                 # Process Results

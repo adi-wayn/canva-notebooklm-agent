@@ -1,4 +1,5 @@
 """Workflow API routes (5 endpoints from T2.4 UX spec)."""
+import asyncio
 import uuid
 import logging
 from fastapi import APIRouter, HTTPException, Header, Response, Query
@@ -269,25 +270,47 @@ async def stream_workflow_events(
             
             # 2) For live updates in same-process context (e.g., E2E test),
             # subscribe to in-memory broadcaster (worker in same process)
+            heartbeat_interval = 30.0  # Send heartbeat every 30 seconds
+            last_heartbeat = asyncio.get_event_loop().time()
+            
             while True:
-                event = await queue.get()
-                # Expect dict {"id": int, "payload": dict}
-                if isinstance(event, dict) and "id" in event and "payload" in event:
-                    event_id = event['id']
-                    # De-duplication: Skip if already replayed from DB
-                    if event_id <= last_replayed_id:
-                        continue
-                        
-                    yield f"id: {event_id}\n"
-                    import json as _json
-                    yield f"data: {_json.dumps(event['payload'])}\n\n"
+                # Calculate time until next heartbeat
+                current_time = asyncio.get_event_loop().time()
+                time_since_heartbeat = current_time - last_heartbeat
+                timeout = max(heartbeat_interval - time_since_heartbeat, 1.0)
+                
+                try:
+                    # Wait for event with timeout to prevent indefinite blocking
+                    event = await asyncio.wait_for(queue.get(), timeout=timeout)
                     
-                    if event_id > last_replayed_id:
-                        last_replayed_id = event_id
-                else:
-                    # Fallback (legacy)
-                    event_json = event.to_json() if hasattr(event, "to_json") else str(event)
-                    yield f"data: {event_json}\n\n"
+                    # Expect dict {"id": int, "payload": dict}
+                    if isinstance(event, dict) and "id" in event and "payload" in event:
+                        event_id = event['id']
+                        # De-duplication: Skip if already replayed from DB
+                        if event_id <= last_replayed_id:
+                            continue
+                            
+                        yield f"id: {event_id}\n"
+                        import json as _json
+                        yield f"data: {_json.dumps(event['payload'])}\n\n"
+                        
+                        if event_id > last_replayed_id:
+                            last_replayed_id = event_id
+                        
+                        # Reset heartbeat timer after sending real event
+                        last_heartbeat = asyncio.get_event_loop().time()
+                    else:
+                        # Fallback (legacy)
+                        event_json = event.to_json() if hasattr(event, "to_json") else str(event)
+                        yield f"data: {event_json}\n\n"
+                        last_heartbeat = asyncio.get_event_loop().time()
+                        
+                except asyncio.TimeoutError:
+                    # No events received within timeout, send heartbeat to keep connection alive
+                    yield ": heartbeat\n\n"
+                    last_heartbeat = asyncio.get_event_loop().time()
+                    logger.debug(f"[SSE] Sent heartbeat for {workflow_id}")
+
         except Exception as e:
             logger.error(f"[SSE] Error streaming events for {workflow_id}: {e}")
         finally:

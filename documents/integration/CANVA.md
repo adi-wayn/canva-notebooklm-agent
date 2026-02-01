@@ -33,6 +33,9 @@
 
 ### 2. Implementation Strategy
 *   **Handler Approach**: `src/workflows/handlers.py` orchestrates the logic.
+*   **Capabilities**:
+    *   `create_presentation(title)`: Creates design.
+    *   `add_text_block(design_id, text, ...)`: Adds Title, Sub-headings, Bullets.
 *   **Strict Real Mode** (Default):
     *   Requires valid `access_token` or `refresh_token` in DB.
     *   If credentials missing: Raises `AuthenticationError`.

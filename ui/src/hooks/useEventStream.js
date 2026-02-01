@@ -11,6 +11,7 @@ export function useEventStream() {
   const [events, setEvents] = useState([]);
   const [lastEventId, setLastEventId] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
+  const [isReconnecting, setIsReconnecting] = useState(false);
   const [streamError, setStreamError] = useState(null);
 
   const abortRef = useRef(null);
@@ -64,6 +65,7 @@ export function useEventStream() {
         );
 
         setIsConnected(true);
+        setIsReconnecting(false); // Clear reconnecting state
         setStreamError(null); // Clear error on successful connect
 
         const { reader } = streamResp;
@@ -106,6 +108,7 @@ export function useEventStream() {
         if (!intentionalCloseRef.current && configRef.current) {
           const { workflowId: wId, tenantId: tId } = configRef.current;
           console.log(`[EventStream] Connection lost. Reconnecting to ${wId} with lastId=${lastId}...`);
+          setIsReconnecting(true);
 
           // Exponential backoff or simple delay
           retryTimeoutRef.current = setTimeout(() => {
@@ -126,6 +129,7 @@ export function useEventStream() {
     setEvents([]);
     setLastEventId(lastId); // Initialize state
     setStreamError(null);
+    setIsReconnecting(false);
     return connect(workflowId, tenantId, lastId);
   }, [connect]);
 
@@ -140,6 +144,7 @@ export function useEventStream() {
     events,
     lastEventId,
     isConnected,
+    isReconnecting,
     streamError,
     openStream,
     closeStream,

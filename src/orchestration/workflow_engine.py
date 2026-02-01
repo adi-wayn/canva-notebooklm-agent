@@ -55,6 +55,15 @@ class WorkflowError:
             self.retryable = False
 
 
+class WorkflowException(Exception):
+    """Exception that carries structured workflow error logic."""
+    def __init__(self, type: ErrorType, message: str, retryable: bool = False):
+        self.type = type
+        self.message = message
+        self.retryable = retryable
+        super().__init__(message)
+
+
 @dataclass
 class WorkflowArtifact:
     """Artifact (output) produced during workflow execution."""
@@ -504,6 +513,7 @@ class WorkflowEngine:
                     extra={"workflow_id": event.workflow_id},
                 )
 
+
     def _classify_error(
         self,
         exception: Exception,
@@ -516,6 +526,10 @@ class WorkflowEngine:
         Returns:
             (ErrorType, retryable, message)
         """
+        # Structured workflow exception (direct mapping)
+        if isinstance(exception, WorkflowException):
+            return (exception.type, exception.retryable, exception.message)
+
         # Transient errors (retryable)
         if isinstance(exception, (TimeoutError, RateLimitError)):
             return (ErrorType.TRANSIENT, True, str(exception))

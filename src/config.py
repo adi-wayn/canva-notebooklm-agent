@@ -99,10 +99,9 @@ class NotebookLMSettings(BaseSettings):
     """NotebookLM API credentials and configuration."""
 
     api_key: SecretStr = Field(default="dev_api_key", description="NotebookLM API key (dev default; set NOTEBOOKLM_API_KEY for production)")
-    api_base_url: str = Field(
-        "https://notebooklm.google.com/api",
-        description="NotebookLM API base URL",
-    )
+    api_key: SecretStr = Field(default="dev_api_key", description="NotebookLM API key (dev default; set NOTEBOOKLM_API_KEY for production)")
+    # api_base_url removed as we use Gemini SDK
+
     poll_interval_seconds: int = Field(5, description="Status polling interval")
     poll_timeout_seconds: int = Field(600, description="Max polling duration (10 min)")
     rate_limit_requests: int = Field(50, description="Requests per rate_limit_window")

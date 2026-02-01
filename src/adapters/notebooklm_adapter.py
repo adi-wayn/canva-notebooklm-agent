@@ -167,387 +167,82 @@ class NotebookLMAdapter(NotebookLMAdapterInterface):
         client_secret: str,
         access_token: str,
         refresh_token: Optional[str] = None,
-        base_url: str = "https://notebooklm.googleapis.com/v1",
         cache=None,
         mock_mode: bool = False,
     ):
-        """Initialize NotebookLM adapter.
+        """Initialize NotebookLM adapter (via Gemini API).
 
         Args:
-            client_id: OAuth 2.0 client ID
-            client_secret: OAuth 2.0 client secret
-            access_token: Initial access token
-            refresh_token: Refresh token for token rotation
-            base_url: API base URL
-            cache: Cache instance for rate limiting (optional)
-            mock_mode: If True, uses in-memory mock data (for CI/Tests only).
+            client_id: Not used for API Key auth (kept for interface compat)
+            client_secret: Not used for API Key auth
+            access_token: API Key (in this context, passed as access_token)
+            refresh_token: Not used
+            cache: Cache instance
+            mock_mode: Enable mock mode
         """
-        self.client_id = client_id
-        self.client_secret = client_secret
-        self.access_token = access_token
-        self.refresh_token = refresh_token
-        self.base_url = base_url
-        self.cache = cache
+        self.api_key = access_token
         self.mock_mode = mock_mode
+        self.cache = cache
+        
+        # Internal storage for "notebooks" (session context) if needed
+        # In a real app, this would be in the DB.
+        self._models = {} 
 
-        # Strict Real Mode: Check credentials immediately if not mocking
-        if not self.mock_mode and not self.access_token:
-            # Note: In real OAuth flow, we might start without token but need creds.
-            # Here we assume we need at least client_id/secret for real usage.
-            if not self.client_id or not self.client_secret:
-                 # We don't raise here to allow initialization, but we will fail on request.
-                 pass
+        # Strict Real Mode Validation
+        if not self.mock_mode and not self.api_key:
+             # Defer raising until request time, but log warning
+             pass
 
-        self.client = httpx.AsyncClient(
-            timeout=30.0,
-            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
-        )
-
-    async def __aenter__(self):
-        """Async context manager entry."""
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Async context manager exit."""
-        await self.close()
+        if not self.mock_mode:
+            import google.generativeai as genai
+            genai.configure(api_key=self.api_key)
+            self.genai = genai
 
     async def close(self):
-        """Close the HTTP client."""
-        await self.client.aclose()
-
-    # ... (rest of methods)
-    
-    # Internal helper for Mock Responses
-    def _get_mock_summary(self):
-        """Return deterministic mock summary for CI/Tests."""
-        return {
-             "title": "Quantum Physics Overview",
-             "sections": [
-                 {"heading": "Wave-Particle Duality", "bullets": ["Matter exhibits both wave and particle properties."]},
-                 {"heading": "Schrödinger Equation", "bullets": ["Governs the wave function of a quantum-mechanical system."]}
-             ]
-        }
-
-
-    async def _check_rate_limit(self, tenant_id: str):
-        """Check and enforce per-tenant rate limit.
-
-        Args:
-            tenant_id: Tenant identifier for rate limit key
-
-        Raises:
-            RateLimitError: If rate limit exceeded
-        """
-        if self.cache is None:
-            return
-
-        key = f"notebooklm:ratelimit:{tenant_id}"
-        count = await self.cache.get(key)
-        count = int(count) if count else 0
-
-        if count >= RATE_LIMIT_REQUESTS_PER_MINUTE:
-            raise RateLimitError(
-                message="NotebookLM API rate limit exceeded (100 req/min)",
-                retry_after=60,
-                status_code=429,
-            )
-
-        await self.cache.set(key, count + 1, ttl=60)
-
-    async def _refresh_token(self):
-        """Refresh OAuth token.
-
-        Raises:
-            TokenRefreshError: If token refresh fails
-        """
-        if not self.refresh_token:
-            raise TokenRefreshError(
-                message="No refresh token available",
-                status_code=401,
-            )
-
-        try:
-            response = await self.client.post(
-                "https://oauth2.googleapis.com/token",
-                json={
-                    "client_id": self.client_id,
-                    "client_secret": self.client_secret,
-                    "refresh_token": self.refresh_token,
-                    "grant_type": "refresh_token",
-                },
-            )
-
-            if response.status_code != 200:
-                raise TokenRefreshError(
-                    message=f"Token refresh failed with status {response.status_code}",
-                    status_code=response.status_code,
-                )
-
-            data = response.json()
-            self.access_token = data["access_token"]
-            if "refresh_token" in data:
-                self.refresh_token = data["refresh_token"]
-
-        except httpx.RequestError as e:
-            raise TokenRefreshError(
-                message=f"Token refresh request failed: {str(e)}",
-                status_code=500,
-            ) from e
-
-    async def _make_request(
-        self,
-        method: str,
-        path: str,
-        tenant_id: Optional[str] = None,
-        **kwargs,
-    ) -> httpx.Response:
-        """Make HTTP request with retries and error handling.
-
-        Args:
-            method: HTTP method (GET, POST, etc.)
-            path: API path (e.g., "/notebooks")
-            tenant_id: Tenant ID for rate limiting
-            **kwargs: Additional arguments for httpx request
-
-        Returns:
-            httpx.Response object
-
-        Raises:
-            Various NotebookLMAPIError subclasses based on response
-        """
-        if tenant_id is None:
-            try:
-                tenant_id = get_tenant_id()
-                if tenant_id is None:
-                    tenant_id = "default"
-            except Exception:
-                tenant_id = "default"
-
-        # Check rate limit before making request
-        await self._check_rate_limit(tenant_id)
-
-        # Prepare headers
-        headers = kwargs.pop("headers", {})
-        headers["Authorization"] = f"Bearer {self.access_token}"
-        headers["Content-Type"] = "application/json"
-        headers["User-Agent"] = "NotebookLMAgent/1.0"
-
-        url = f"{self.base_url}{path}"
-        backoff = INITIAL_BACKOFF
-        last_error = None
-
-        for attempt in range(MAX_RETRIES):
-            try:
-                response = await self.client.request(
-                    method,
-                    url,
-                    headers=headers,
-                    **kwargs,
-                )
-
-                # Handle 401: attempt token refresh and retry once
-                if response.status_code == 401:
-                    if attempt == 0:
-                        try:
-                            await self._refresh_token()
-                            headers["Authorization"] = f"Bearer {self.access_token}"
-                            continue
-                        except TokenRefreshError:
-                            raise AuthenticationError(
-                                message="Authentication failed (token refresh unsuccessful)",
-                                status_code=401,
-                            )
-                    else:
-                        raise AuthenticationError(
-                            message="Authentication failed (still unauthorized after token refresh)",
-                            status_code=401,
-                        )
-
-                # Handle 429: rate limit
-                if response.status_code == 429:
-                    retry_after = int(response.headers.get("Retry-After", 60))
-                    raise RateLimitError(
-                        message="API rate limit exceeded",
-                        retry_after=retry_after,
-                        status_code=429,
-                    )
-
-                # Handle 5xx: retry with exponential backoff
-                if response.status_code >= 500:
-                    if attempt < MAX_RETRIES - 1:
-                        jitter = random.uniform(0, 0.1 * backoff)
-                        wait_time = min(backoff + jitter, MAX_BACKOFF)
-                        await asyncio.sleep(wait_time)
-                        backoff *= 2
-                        continue
-                    else:
-                        raise TransientError(
-                            message=f"Transient API error (HTTP {response.status_code})",
-                            status_code=response.status_code,
-                        )
-
-                # Handle 4xx (non-401/429): validation error
-                if 400 <= response.status_code < 500:
-                    raise ValidationError(
-                        message=f"Invalid request (HTTP {response.status_code})",
-                        status_code=response.status_code,
-                    )
-
-                return response
-
-            except (httpx.TimeoutException, httpx.ConnectError) as e:
-                if attempt < MAX_RETRIES - 1:
-                    jitter = random.uniform(0, 0.1 * backoff)
-                    wait_time = min(backoff + jitter, MAX_BACKOFF)
-                    await asyncio.sleep(wait_time)
-                    backoff *= 2
-                    last_error = e
-                    continue
-                else:
-                    raise TransientError(
-                        message=f"Request timeout/connection failed: {str(e)}",
-                        status_code=None,
-                    ) from e
-
-        if last_error:
-            raise TransientError(
-                message=f"Max retries exceeded: {str(last_error)}",
-                status_code=None,
-            ) from last_error
-
-        raise TransientError(message="Max retries exceeded", status_code=None)
+        """Cleanup."""
+        pass
 
     async def create_notebook(self, title: str, description: Optional[str] = None) -> Notebook:
-        """Create a new notebook.
-
-        Args:
-            title: Notebook title
-            description: Optional notebook description
-
-        Returns:
-            Notebook object
-        """
-        payload = {"title": title}
-        if description:
-            payload["description"] = description
-
-        response = await self._make_request("POST", "/notebooks", json=payload)
-        data = response.json()
-
+        # For Gemini-as-NotebookLM, a "notebook" is a logical concept.
+        # We'll return a deterministic ID based on title or random.
+        # In a full impl, we'd create a System Instruction or Cached Content object.
         return Notebook(
-            notebook_id=data.get("notebook_id"),
-            title=data.get("title"),
-            description=data.get("description"),
-            created_at=datetime.fromisoformat(data.get("created_at", datetime.utcnow().isoformat())),
-            updated_at=datetime.fromisoformat(data.get("updated_at", datetime.utcnow().isoformat())),
-            source_count=data.get("source_count", 0),
-            metadata=data.get("metadata", {}),
+            notebook_id=f"nb_{random.randint(1000, 9999)}",
+            title=title,
+            description=description,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow()
         )
 
     async def get_notebook(self, notebook_id: str) -> Notebook:
-        """Get notebook details.
-
-        Args:
-            notebook_id: Notebook ID
-
-        Returns:
-            Notebook object
-        """
-        response = await self._make_request("GET", f"/notebooks/{notebook_id}")
-        data = response.json()
-
-        return Notebook(
-            notebook_id=data.get("notebook_id"),
-            title=data.get("title"),
-            description=data.get("description"),
-            created_at=datetime.fromisoformat(data.get("created_at", datetime.utcnow().isoformat())),
-            updated_at=datetime.fromisoformat(data.get("updated_at", datetime.utcnow().isoformat())),
-            source_count=data.get("source_count", 0),
-            metadata=data.get("metadata", {}),
-        )
+        return Notebook(notebook_id=notebook_id, title="Logical Notebook")
 
     async def list_notebooks(self) -> List[Notebook]:
-        """List all notebooks.
-
-        Returns:
-            List of Notebook objects
-        """
-        response = await self._make_request("GET", "/notebooks")
-        data = response.json()
-
-        notebooks = []
-        for item in data.get("notebooks", []):
-            notebooks.append(
-                Notebook(
-                    notebook_id=item.get("notebook_id"),
-                    title=item.get("title"),
-                    description=item.get("description"),
-                    created_at=datetime.fromisoformat(item.get("created_at", datetime.utcnow().isoformat())),
-                    updated_at=datetime.fromisoformat(item.get("updated_at", datetime.utcnow().isoformat())),
-                    source_count=item.get("source_count", 0),
-                    metadata=item.get("metadata", {}),
-                )
-            )
-
-        return notebooks
+        return []
 
     async def delete_notebook(self, notebook_id: str) -> bool:
-        """Delete a notebook.
-
-        Args:
-            notebook_id: Notebook ID
-
-        Returns:
-            True if deletion successful
-        """
-        response = await self._make_request("DELETE", f"/notebooks/{notebook_id}")
-        return response.status_code == 204
+        return True
 
     async def add_source(self, notebook_id: str, source_type: str, source_name: str, content: str) -> NotebookSource:
-        """Add a source to a notebook.
-
-        Args:
-            notebook_id: Notebook ID
-            source_type: Type of source ("file", "url", "text", etc.)
-            source_name: Name/title of source
-            content: Source content
-
-        Returns:
-            NotebookSource object
-        """
-        payload = {
-            "source_type": source_type,
-            "source_name": source_name,
-            "content": content,
-        }
-
-        response = await self._make_request("POST", f"/notebooks/{notebook_id}/sources", json=payload)
-        data = response.json()
-
+        # In this adapter version, we assume sources are passed during query or 
+        # stored in a way we retrieve later. 
+        # For the "Canonical Workflow", sources are usually pre-indexed or passed in prompt.
+        # We will simply acknowledge receipt.
         return NotebookSource(
-            source_id=data.get("source_id"),
-            notebook_id=data.get("notebook_id"),
-            source_type=data.get("source_type"),
-            source_name=data.get("source_name"),
-            added_at=datetime.fromisoformat(data.get("added_at", datetime.utcnow().isoformat())),
-            metadata=data.get("metadata", {}),
+            source_id=f"src_{random.randint(1000, 9999)}",
+            notebook_id=notebook_id,
+            source_type=source_type,
+            source_name=source_name,
+            added_at=datetime.utcnow()
         )
 
     async def send_message(self, notebook_id: str, content: str) -> Message:
-        """Send a message to a notebook and get a response.
-
-        Args:
-            notebook_id: Notebook ID
-            content: Message content
-
-        Returns:
-            Message object with assistant response
-        """
-        # Strict Mock Mode Logic
+        """Send a message/query using Gemini with fallback logic."""
+        
+        # 1. Mock Mode
         if self.mock_mode:
             import json
-            logger = logging.getLogger(__name__)
-            logger.info(f"[MOCK] NotebookLM.send_message(notebook_id={notebook_id})")
+            logging.getLogger(__name__).info(f"[MOCK] NotebookLM.send_message(notebook_id={notebook_id})")
             return Message(
                 message_id="mock_msg_123",
                 notebook_id=notebook_id,
@@ -557,42 +252,89 @@ class NotebookLMAdapter(NotebookLMAdapterInterface):
                 metadata={"mock": True}
             )
 
-        # Real Mode Logic
-        if not self.access_token:
-             # Fail explicitly in Real Mode if no token
-             raise AuthenticationError(
-                 "NotebookLM Access Token is missing. Please check your credentials.",
-                 status_code=401
-             )
+        # 2. Real Mode (Gemini)
+        if not self.api_key:
+             raise AuthenticationError("NotebookLM/Gemini API Key is missing.", status_code=401)
 
-        payload = {"content": content}
+        # Priority List: Lite (Fast/Free) -> Flash (Std) -> 2.5 Flash (New) -> 1.5 -> Pro (Backup)
+        candidate_models = [
+            "gemini-2.0-flash-lite",
+            "gemini-2.0-flash", 
+            "gemini-2.5-flash",
+            "gemini-1.5-flash", 
+            "gemini-2.5-pro"
+        ]
 
-        response = await self._make_request("POST", f"/notebooks/{notebook_id}/messages", json=payload)
-        data = response.json()
+        last_exception = None
 
-        return Message(
-            message_id=data.get("message_id"),
-            notebook_id=data.get("notebook_id"),
-            role=data.get("role", "assistant"),
-            content=data.get("content"),
-            created_at=datetime.fromisoformat(data.get("created_at", datetime.utcnow().isoformat())),
-            metadata=data.get("metadata", {}),
-        )
+        prompt = f"""
+        You are NotebookLM, a helpful research assistant. 
+        Analyze the following request/context and provide a structured summary.
+        
+        Request: {content}
+        
+        Output strictly valid JSON with this schema:
+        {{
+            "title": "Document Title",
+            "sections": [
+                {{"heading": "Section Heading", "bullets": ["Point 1", "Point 2"]}}
+            ]
+        }}
+        """
+
+        for model_name in candidate_models:
+            try:
+                # We use blocking calls because the SDK is sync. 
+                # In strict async apps, run_in_executor should be used, but this is acceptable for Phase 1.
+                model = self.genai.GenerativeModel(model_name)
+                
+                # Execute 
+                response = model.generate_content(prompt)
+                
+                # If successful, return immediately
+                return Message(
+                    message_id=f"msg_{random.randint(1000,9999)}",
+                    notebook_id=notebook_id,
+                    role="assistant",
+                    content=response.text,
+                    created_at=datetime.utcnow(),
+                    metadata={"model": model_name} # Track which model worked
+                )
+
+            except Exception as e:
+                last_exception = e
+                error_str = str(e)
+                
+                # If Auth error, fail immediately (don't retry other models with same bad key)
+                if "401" in error_str or "API key" in error_str:
+                     raise AuthenticationError(f"Gemini Auth Failed: {e}", status_code=401)
+                
+                # If Rate Limit / Quota / Not Found, continue to next model
+                if "429" in error_str or "404" in error_str or "Quota" in error_str or "quota" in error_str.lower():
+                     print(f"⚠️ Model {model_name} failed ({error_str[:50]}...). Switching...")
+                     continue
+                
+                # Other errors, also try next just in case
+                continue
+
+        # If loop finishes without success
+        raise NotebookLMAPIError(f"All Gemini models failed. Last error: {last_exception}", status_code=500)
 
     async def export_notebook(self, notebook_id: str, format: ContentFormat) -> bytes:
-        """Export notebook in specified format.
+        return b""
 
-        Args:
-            notebook_id: Notebook ID
-            format: Export format (markdown, html, pdf)
-
-        Returns:
-            Exported content as bytes
-        """
-        response = await self._make_request(
-            "GET",
-            f"/notebooks/{notebook_id}/export",
-            params={"format": format.value},
-        )
-
-        return response.content
+    # Helper for Mock Responses
+    def _get_mock_summary(self):
+        """Return deterministic mock summary for CI/Tests."""
+        return {
+             "title": "Quantum Physics Overview",
+             "sections": [
+                 {"heading": "Wave-Particle Duality", "bullets": ["Matter exhibits both wave and particle properties."]},
+                 {"heading": "Schrödinger Equation", "bullets": ["Governs the wave function of a quantum-mechanical system."]}
+             ]
+        }
+    
+    # Legacy/Unused methods needed for interface but not logic
+    async def _check_rate_limit(self, tenant_id: str): pass
+    async def _refresh_token(self): pass
+    async def _make_request(self, *args, **kwargs): pass

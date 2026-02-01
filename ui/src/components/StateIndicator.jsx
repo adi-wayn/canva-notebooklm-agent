@@ -25,7 +25,7 @@ export function StateIndicator({
     <div className="state-indicator">
       {/* Status Badge */}
       <div className={`status-badge ${statusClass}`} data-testid="workflow-status">
-        {snapshot?.status || 'Loading…'}
+        {getStatusLabel(snapshot?.status) || 'Loading…'}
       </div>
 
       {/* Progress Bar */}
@@ -107,4 +107,17 @@ export function StateIndicator({
       )}
     </div>
   );
+}
+
+// Helper to convert technical status to user-friendly label
+function getStatusLabel(status) {
+  const labels = {
+    'SUBMITTED': 'Submitted',
+    'QUEUED': 'Waiting to start...',
+    'PROCESSING': 'Working on it...',
+    'COMPLETED': 'Complete ✓',
+    'FAILED': 'Failed ✗',
+    'CANCELLED': 'Cancelled',
+  };
+  return labels[status] || status;
 }

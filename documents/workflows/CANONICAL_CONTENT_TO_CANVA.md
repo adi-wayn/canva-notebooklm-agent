@@ -44,18 +44,19 @@ The user makes a `POST /api/v1/workflows` request with:
 
 ### Step C: Canva Design Creation
 **Action**: Use Canva Connect API to generate unique artifacts.
-*   **Adapter Method**: `CanvaAdapter.create_design(design_type="doc" | "presentation")`
-    *   *Note*: If `presentation` creation API is limited, we might fallback to `doc` or a basic image series, but the goal is "Real Canva Artifacts".
+*   **Adapter Method**: `CanvaAdapter.create_presentation(title=...)`
 *   **Operations**:
-    1.  `create_design(title="{prompt}")` -> Returns `design_id`, `edit_url`.
-    2.  (If API usage permits) `add_page()` for each slide.
-    3.  `add_text(text=..., position=...)`.
+    1.  `create_presentation(title=...)` -> Returns `design_id`.
+    2.  `add_text_block(text={title}, font_size=48)` -> Main Title.
+    3.  Iterate sections:
+        *   `add_text_block(text={heading}, font_size=32)` -> Section Header.
+        *   `add_text_block(text={bullet}, font_size=24)` -> Bullet Point.
 *   **Output**:
     ```json
     {
-      "design_id": "DAxxxx",
-      "edit_url": "https://www.canva.com/design/...",
-      "view_url": "https://www.canva.com/design/..."
+      "canva_design_id": "DAxxxx",
+      "canva_edit_url": "https://www.canva.com/design/DAxxxx/edit",
+      "canva_view_url": "https://..."
     }
     ```
 
