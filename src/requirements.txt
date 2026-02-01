@@ -1,0 +1,60 @@
+# Core Framework & Async
+fastapi==0.128.0
+uvicorn[standard]==0.40.0
+httpx==0.28.1
+starlette==0.50.0
+
+# Pydantic & Settings
+pydantic==2.12.5
+pydantic-settings==2.12.0
+pydantic-core==2.41.5
+python-dotenv==1.2.1
+
+# Database & ORM
+sqlalchemy==2.0.45
+asyncpg==0.31.0
+alembic==1.13.0
+
+# Caching & Queue
+redis==7.1.0
+
+# HTTP & API clients
+requests==2.32.5
+requests-oauthlib==2.0.0
+
+# Authentication
+cryptography==46.0.3
+PyJWT==2.10.1
+
+# Google APIs (for NotebookLM)
+google-auth==2.47.0
+google-auth-oauthlib==1.2.4
+google-auth-httplib2==0.3.0
+httplib2==0.31.1
+
+# LLM Integration
+openai>=1.10.0
+
+# Observability (minimal for Phase 1)
+python-json-logger==2.0.7
+
+# Dependencies (transitive)
+annotated-types==0.7.0
+annotated-doc==0.0.4
+certifi==2026.1.4
+cffi==2.0.0
+charset-normalizer==3.4.4
+h11==0.16.0
+httpcore==1.0.9
+idna==3.11
+oauthlib==3.3.1
+packaging==25.0
+pyasn1==0.6.2
+pyasn1-modules==0.4.2
+pycparser==2.23
+sniffio==1.3.1
+tqdm==4.67.1
+typing-extensions==4.15.0
+typing-inspection==0.4.2
+urllib3==2.6.3
+rsa==4.9.1

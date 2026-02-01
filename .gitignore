@@ -1,0 +1,90 @@
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.iml
+
+# Testing
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.hypothesis/
+
+# Logging
+logs/
+*.log
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Docker
+.dockerignore
+
+# Kubernetes
+kubeconfig.yaml
+
+# Secrets & Credentials
+secrets/
+.vault-token
+credentials.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+.tmp/
+temp/
+*.tmp
+
+# Frontend
+node_modules/
+dist/
+.npm
+ui/dist/
+ui/node_modules/
+ui/playwright-report/
+ui/test-results/

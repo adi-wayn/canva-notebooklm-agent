@@ -1,0 +1,59 @@
+version: "3.8"
+
+# Local development environment with PostgreSQL and Redis
+# Usage:
+#   docker-compose up           # Start services
+#   docker-compose down         # Stop services
+#   docker-compose logs -f      # View logs
+
+services:
+  # PostgreSQL 12 database
+  postgres:
+    image: postgres:12.18-alpine
+    container_name: canva-notebooklm-postgres
+    environment:
+      POSTGRES_USER: canva_user
+      POSTGRES_PASSWORD: canva_password_dev
+      POSTGRES_DB: canva_notebooklm_db
+    ports:
+      - "55432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U canva_user -d canva_notebooklm_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - canva-network
+    labels:
+      - "com.docker.compose.project=canva-notebooklm-agent"
+
+  # Redis 6.0 for caching and task queue
+  redis:
+    image: redis:6.2-alpine
+    container_name: canva-notebooklm-redis
+    command: redis-server --appendonly yes --requirepass ""
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - canva-network
+    labels:
+      - "com.docker.compose.project=canva-notebooklm-agent"
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  canva-network:
+    driver: bridge
