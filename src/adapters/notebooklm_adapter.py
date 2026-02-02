@@ -267,20 +267,67 @@ class NotebookLMAdapter(NotebookLMAdapterInterface):
 
         last_exception = None
 
-        prompt = f"""
-        You are NotebookLM, a helpful research assistant. 
-        Analyze the following request/context and provide a structured summary.
-        
-        Request: {content}
-        
-        Output strictly valid JSON with this schema:
+        prompt = f"""You are an AI research assistant helping to create a compelling presentation.
+
+TASK: Analyze the user's request and extract key insights to structure a presentation.
+
+USER REQUEST: {content}
+
+INSTRUCTIONS:
+1. Identify 3-7 main themes or topics that would make compelling presentation sections
+2. For each theme, extract:
+   - A clear, specific heading (max 10 words)
+   - A substantive narrative paragraph (200-400 characters) explaining the key concept
+   - 2-4 concrete bullet points with specific insights or examples (each 15-30 words)
+3. Determine the most appropriate presentation theme based on the content
+4. Create a logical flow that tells a coherent story
+
+OUTPUT FORMAT (strict JSON, no markdown):
+{{
+    "title": "Specific, compelling presentation title (max 100 chars)",
+    "subtitle": "Optional subtitle providing context or framing",
+    "sections": [
         {{
-            "title": "Document Title",
-            "sections": [
-                {{"heading": "Section Heading", "bullets": ["Point 1", "Point 2"]}}
-            ]
+            "heading": "Specific section heading",
+            "content": "Substantive narrative paragraph explaining this concept or theme (200-400 chars)",
+            "bullets": ["Specific insight or example 1", "Specific insight or example 2", "Specific insight or example 3"],
+            "visual_hint": "text"
         }}
-        """
+    ],
+    "key_insights": ["Top-level takeaway 1", "Top-level takeaway 2", "Top-level takeaway 3"],
+    "suggested_theme": "professional"
+}}
+
+CRITICAL REQUIREMENTS:
+- Title must be SPECIFIC to the request, not generic (e.g., "Quantum Computing: From Theory to Application" not "Overview")
+- Each section must have SUBSTANTIVE content with real information, not placeholders
+- Bullets must contain SPECIFIC insights, examples, or data points
+- Content must be directly relevant to the user's request
+- Minimum 3 sections, maximum 7 sections
+- All text must be clear, professional, and presentation-ready
+
+EXAMPLES OF GOOD vs BAD:
+
+GOOD Section:
+{{
+    "heading": "Quantum Superposition Explained",
+    "content": "Quantum superposition allows particles to exist in multiple states simultaneously until measured. This fundamental principle enables quantum computers to process vast amounts of information in parallel, unlike classical bits that must be either 0 or 1.",
+    "bullets": [
+        "Qubits can represent both 0 and 1 at the same time through superposition",
+        "Measurement collapses the superposition to a definite state",
+        "Enables exponential speedup for certain computational problems"
+    ]
+}}
+
+BAD Section:
+{{
+    "heading": "Introduction",
+    "content": "This section covers the basics.",
+    "bullets": ["Point 1", "Point 2", "Point 3"]
+}}
+
+Generate the presentation structure now (JSON only, no markdown):
+"""
 
         for model_name in candidate_models:
             try:

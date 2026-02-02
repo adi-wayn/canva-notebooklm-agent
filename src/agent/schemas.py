@@ -63,6 +63,51 @@ class CanonicalOutput:
 
 
 @dataclass
+class TraceElement:
+    """A single element in the trace map linking Canva content back to source."""
+    type: str  # title, subtitle, section_heading, section_content, bullet
+    content_snippet: str
+    source: str  # e.g., "notebooklm.sections[0].heading"
+    reasoning: Optional[str] = None
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "type": self.type,
+            "content_snippet": self.content_snippet,
+            "source": self.source,
+            "reasoning": self.reasoning
+        }
+
+@dataclass
+class SlideTrace:
+    """Traceability mapping for a single slide."""
+    slide_index: int
+    elements: List[TraceElement]
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "slide_index": self.slide_index,
+            "elements": [e.to_dict() for e in self.elements]
+        }
+
+@dataclass
+class TraceMap:
+    """
+    Full traceability map for a generated design.
+    """
+    workflow_id: str
+    design_id: str
+    slides: List[SlideTrace]
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "workflow_id": self.workflow_id,
+            "design_id": self.design_id,
+            "slides": [s.to_dict() for s in self.slides]
+        }
+
+
+@dataclass
 class DesignPlan:
     """
     Canva-specific design plan derived from canonical output.
@@ -74,9 +119,10 @@ class DesignPlan:
     slide_count: int
     theme: str  # 'professional', 'creative', 'minimal'
     sections: List[SectionContent]
+    reasoning: Optional[Dict[str, Any]] = None  # Agent reasoning metadata
     
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for logging/debugging."""
+        """Convert to dictionary for logging/persistence."""
         return {
             "title": self.title,
             "subtitle": self.subtitle,
@@ -90,5 +136,6 @@ class DesignPlan:
                     "visual_hint": s.visual_hint
                 }
                 for s in self.sections
-            ]
+            ],
+            "reasoning": self.reasoning
         }

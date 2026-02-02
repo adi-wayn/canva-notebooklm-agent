@@ -1,4 +1,4 @@
-.PHONY: help setup up down logs clean test lint format install
+.PHONY: help setup up down logs clean test lint format install ui worker dev api e2e e2e-install e2e-ui e2e-headed
 
 # Compose configuration (compose file lives under ./docker)
 COMPOSE_FILE := docker/docker-compose.yml

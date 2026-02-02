@@ -68,9 +68,33 @@ async def handle_presentation_workflow(
         logger=logger
     )
     
-    # Instantiate and execute agent
+    # Instantiate agent
     agent = DesignAgent(context)
-    result = await agent.execute(prompt, workflow, engine)
+    
+    # Route request based on payload functionality
+    # (Matches requirements: Creation, Iteration, Explainability via payload flags)
+    
+    if payload.get("modification_prompt") and payload.get("previous_workflow_id"):
+        # ITERATION: Modify existing design
+        result = await agent.edit_design(
+            modification_prompt=payload["modification_prompt"],
+            previous_workflow_id=payload["previous_workflow_id"],
+            workflow=workflow,
+            engine=engine
+        )
+        
+    elif payload.get("query") and payload.get("previous_workflow_id"):
+        # EXPLAINABILITY: Answer questions about design
+        result = await agent.explain_design(
+            query=payload["query"],
+            previous_workflow_id=payload["previous_workflow_id"],
+            workflow=workflow,
+            engine=engine
+        )
+        
+    else:
+        # CREATION: Default Golden Path
+        result = await agent.execute(prompt, workflow, engine)
     
     return result
 
